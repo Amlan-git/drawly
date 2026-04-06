@@ -1,0 +1,79 @@
+# === Next.js ===
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+# === Environment & secrets ===
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+# Keep .env.example tracked
+!.env.example
+
+credentials.json
+token.json
+
+# === Intermediate files (always regenerated) ===
+.tmp/
+.tmp
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+
+# === macOS ===
+.DS_Store
+
+# === IDE ===
+.vscode/
+.idea/
+
+# === Misc ===
+*.pem
+
+# local logs
+*.log
+
+# local database / misc temp files if introduced later
+*.sqlite
+*.sqlite3
+
+# optional: OS/editor noise
+*.swp
