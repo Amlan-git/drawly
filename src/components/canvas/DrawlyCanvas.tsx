@@ -7,8 +7,9 @@ import { useRouter } from 'next/navigation';
 import { saveSceneToLocalStorage, loadSceneFromLocalStorage } from '@/lib/local-storage';
 import { useAuth } from '@/hooks/useAuth';
 import { createDiagramFromRoom } from '@/lib/db-persistence';
-import { CloudSync, Loader2, Image as ImageIcon, FileCode } from 'lucide-react';
+import { CloudSync, Loader2, Image as ImageIcon, FileCode, X } from 'lucide-react';
 import WorkspaceBackground from '@/components/ui/WorkspaceBackground';
+import { exportCanvas } from '@/lib/export';
 
 import "@excalidraw/excalidraw/index.css";
 
@@ -37,6 +38,7 @@ export default function DrawlyCanvas() {
   const [initialData, setInitialData] = useState<InitialCanvasData | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const excalidrawApiRef = useRef<any>(null);
 
   useEffect(() => {
@@ -86,7 +88,7 @@ export default function DrawlyCanvas() {
 
       router.push(`/diagram/${diagram.id}`);
     } catch (error: any) {
-      alert("Error saving diagram: " + error.message);
+      setSaveError(error.message ?? 'Failed to save diagram');
     } finally {
       setIsSaving(false);
     }
@@ -94,36 +96,13 @@ export default function DrawlyCanvas() {
 
   const handleExport = async (type: 'png' | 'svg') => {
     if (!excalidrawApiRef.current) return;
-
-    const elements = excalidrawApiRef.current.getSceneElements();
-    if (!elements || elements.length === 0) return;
-
-    try {
-      const { exportToBlob } = await import('@excalidraw/excalidraw');
-      
-      // Solid bg required for valid PNG/SVG
-      const currentAppState = excalidrawApiRef.current.getAppState();
-      const exportAppState = {
-        ...currentAppState,
-        viewBackgroundColor: "#121212",
-      };
-
-      const blob = await exportToBlob({
-        elements,
-        appState: exportAppState,
-        files: excalidrawApiRef.current.getFiles(),
-        mimeType: type === 'png' ? 'image/png' : 'image/svg+xml',
-      });
-
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `drawly-export.${type}`;
-      link.click();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error("Export failed:", error);
-    }
+    await exportCanvas(
+      type,
+      excalidrawApiRef.current.getSceneElements(),
+      excalidrawApiRef.current.getAppState(),
+      excalidrawApiRef.current.getFiles(),
+      'drawly-export'
+    );
   };
 
   if (!isReady) {
@@ -137,6 +116,16 @@ export default function DrawlyCanvas() {
   return (
     <div style={styles.container}>
       <WorkspaceBackground />
+
+      {saveError && (
+        <div style={styles.errorToast}>
+          <span style={styles.errorText}>{saveError}</span>
+          <button onClick={() => setSaveError(null)} style={styles.errorClose}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
       <div style={styles.bottomOverlay}>
         <div style={styles.buttonGroup}>
           <button
@@ -256,5 +245,32 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
     transition: 'transform 0.2s ease',
+  },
+  errorToast: {
+    position: 'fixed',
+    top: '72px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 200,
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    backgroundColor: '#450a0a',
+    border: '1px solid #f87171',
+    borderRadius: '8px',
+    padding: '10px 16px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+  },
+  errorText: {
+    fontSize: '13px',
+    color: '#fca5a5',
+  },
+  errorClose: {
+    background: 'none',
+    border: 'none',
+    color: '#f87171',
+    cursor: 'pointer',
+    padding: '2px',
+    display: 'flex',
   },
 };

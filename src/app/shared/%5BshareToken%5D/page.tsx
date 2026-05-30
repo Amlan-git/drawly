@@ -3,16 +3,15 @@ import { notFound } from 'next/navigation';
 import SharedCanvas from '@/components/canvas/SharedCanvas';
 
 interface SharedPageProps {
-  params: {
+  params: Promise<{
     shareToken: string;
-  };
+  }>;
 }
 
 export default async function SharedPage({ params }: SharedPageProps) {
-  const { shareToken } = params;
+  const { shareToken } = await params;
   const supabase = await createClient();
 
-  // Publicly accessible query (RLS policy allows this if share_token is present)
   const { data: diagram, error } = await supabase
     .from('diagrams')
     .select('*')

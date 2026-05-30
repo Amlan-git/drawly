@@ -5,7 +5,8 @@ import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import AppHeader from '@/components/shell/AppHeader';
-import { Trash2, ExternalLink, Calendar, Plus, Loader2, LayoutGrid, List, Edit2 } from 'lucide-react';
+import { ConfirmModal, PromptModal } from '@/components/ui/Modal';
+import { Trash2, ExternalLink, Calendar, Plus, Loader2, Edit2 } from 'lucide-react';
 
 interface Diagram {
   id: string;
@@ -18,6 +19,8 @@ export default function DashboardPage() {
   const { user, isLoading: authLoading } = useAuth();
   const [diagrams, setDiagrams] = useState<Diagram[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<Diagram | null>(null);
+  const [renameTarget, setRenameTarget] = useState<Diagram | null>(null);
   const supabase = createClient();
 
   useEffect(() => {
@@ -45,32 +48,27 @@ export default function DashboardPage() {
     setLoading(false);
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this diagram?')) return;
-
+  const confirmDelete = async (id: string) => {
     const { error } = await supabase
       .from('diagrams')
       .update({ is_deleted: true })
       .eq('id', id);
 
     if (error) {
-      alert('Error deleting diagram: ' + error.message);
+      console.error('Error deleting diagram:', error.message);
     } else {
       setDiagrams(diagrams.filter(d => d.id !== id));
     }
   };
 
-  const handleRename = async (id: string, currentTitle: string) => {
-    const newTitle = prompt('Enter new diagram name:', currentTitle);
-    if (!newTitle || newTitle === currentTitle) return;
-
+  const confirmRename = async (id: string, newTitle: string) => {
     const { error } = await supabase
       .from('diagrams')
       .update({ title: newTitle })
       .eq('id', id);
 
     if (error) {
-      alert('Error renaming diagram: ' + error.message);
+      console.error('Error renaming diagram:', error.message);
     } else {
       setDiagrams(diagrams.map(d => d.id === id ? { ...d, title: newTitle } : d));
     }
@@ -88,6 +86,28 @@ export default function DashboardPage() {
   return (
     <div style={styles.page}>
       <AppHeader />
+
+      {deleteTarget && (
+        <ConfirmModal
+          title="Delete Diagram"
+          message={`Delete "${deleteTarget.title}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          danger
+          onConfirm={() => confirmDelete(deleteTarget.id)}
+          onClose={() => setDeleteTarget(null)}
+        />
+      )}
+
+      {renameTarget && (
+        <PromptModal
+          title="Rename Diagram"
+          label="New name"
+          defaultValue={renameTarget.title}
+          confirmLabel="Rename"
+          onConfirm={(newTitle) => confirmRename(renameTarget.id, newTitle)}
+          onClose={() => setRenameTarget(null)}
+        />
+      )}
       
       <main style={styles.main}>
         <div style={styles.header}>
@@ -118,15 +138,15 @@ export default function DashboardPage() {
                 <div style={styles.cardHeader}>
                   <h3 style={styles.cardTitle}>{diagram.title}</h3>
                   <div style={styles.cardActions}>
-                    <button 
-                      onClick={() => handleRename(diagram.id, diagram.title)} 
+                    <button
+                      onClick={() => setRenameTarget(diagram)}
                       style={styles.actionIconButton}
                       title="Rename"
                     >
                       <Edit2 size={16} />
                     </button>
-                    <button 
-                      onClick={() => handleDelete(diagram.id)} 
+                    <button
+                      onClick={() => setDeleteTarget(diagram)}
                       style={styles.actionIconButton}
                       title="Delete"
                     >

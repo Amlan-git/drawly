@@ -7,7 +7,7 @@
 import React, { useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Share2, Plus, Check, LayoutDashboard, LogOut, User as UserIcon, CloudSync } from 'lucide-react';
+import { Share2, Plus, Check, LayoutDashboard, LogOut, User as UserIcon } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { nanoid } from 'nanoid';
 

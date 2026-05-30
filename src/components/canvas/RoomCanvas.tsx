@@ -1,6 +1,5 @@
 'use client';
 
-
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
@@ -8,9 +7,12 @@ import { useRoom } from '@/hooks/useRoom';
 import { saveSceneToLocalStorage, loadSceneFromLocalStorage } from '@/lib/local-storage';
 import { useAuth } from '@/hooks/useAuth';
 import { createDiagramFromRoom } from '@/lib/db-persistence';
-import { CloudSync, Loader2, Image as ImageIcon, FileCode } from 'lucide-react';
+import { CloudSync, Loader2, Image as ImageIcon, FileCode, X } from 'lucide-react';
+import { exportCanvas } from '@/lib/export';
 import AppHeader from '@/components/shell/AppHeader';
 import WorkspaceBackground from '@/components/ui/WorkspaceBackground';
+import CursorOverlay from './CursorOverlay';
+import ActiveCollaborators from './ActiveCollaborators';
 
 import "@excalidraw/excalidraw/index.css";
 
@@ -27,70 +29,67 @@ interface RoomCanvasProps {
 }
 
 export default function RoomCanvas({ roomToken }: RoomCanvasProps) {
-  const { ydoc, elementsMap, status, isSynced, updateCursor } = useRoom(roomToken);
+  const { ydoc, elementsMap, status, isSynced, collaborators, identity, updateCursor } = useRoom(roomToken);
   const { user } = useAuth();
   const router = useRouter();
 
   const [initialData, setInitialData] = useState<any>(null);
-  const [isMounted, setIsMounted] = useState(false);
-  const [isLoaded, setIsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // Track whether the first remote sync has been applied so we don't overwrite local edits
+  const remoteSyncApplied = useRef(false);
   const excalidrawRef = useRef<any>(null);
   const lastUpdateFromRemote = useRef<number>(0);
 
+  // Stable callback — never recreated, so Excalidraw never sees a changed prop reference
+  const setExcalidrawAPI = useCallback((api: any) => { excalidrawRef.current = api; }, []);
+
+  // Phase 1: load immediately from localStorage — never block on WebSocket
   useEffect(() => {
-    setIsMounted(true);
-  }, []);
-
-  useEffect(() => {
-    if (!isSynced || !isMounted) return;
-
-    if (elementsMap.size > 0) {
-      const elements = Array.from(elementsMap.values()) as ExcalidrawElement[];
-      setInitialData({
-        elements,
-        appState: { theme: 'dark', viewBackgroundColor: 'transparent' },
-      });
-      setIsLoaded(true);
-      return;
-    }
-
     const localData = loadSceneFromLocalStorage(roomToken);
-    if (localData) {
-      setInitialData({
-        elements: localData.elements,
-        appState: { ...localData.appState, theme: 'dark', viewBackgroundColor: 'transparent' },
-      });
-      ydoc.transact(() => {
-        localData.elements.forEach((el: any) => {
-          elementsMap.set(el.id, { ...el });
-        });
-      }, 'local');
-    } else {
-      setInitialData({
-        appState: { theme: 'dark', viewBackgroundColor: 'transparent' },
-      });
-    }
-    setIsLoaded(true);
-  }, [roomToken, isSynced, isMounted, elementsMap, ydoc]);
+    setInitialData({
+      elements: localData?.elements ?? [],
+      appState: {
+        ...(localData?.appState ?? {}),
+        theme: 'dark',
+        viewBackgroundColor: 'transparent',
+      },
+    });
+  }, [roomToken]);
 
-  // Sync Yjs elements to Excalidraw
+  // Phase 2: once WS syncs and remote doc has elements, hot-swap into the live scene
   useEffect(() => {
-    if (!isLoaded || !ydoc) return;
+    if (!isSynced || remoteSyncApplied.current) return;
+    if (elementsMap.size === 0) return; // remote doc is empty — keep local state
+
+    remoteSyncApplied.current = true;
+    const elements = Array.from(elementsMap.values()) as ExcalidrawElement[];
+    if (excalidrawRef.current) {
+      // Canvas is already mounted — apply as a live update
+      excalidrawRef.current.updateScene({ elements });
+    } else {
+      // Canvas not yet mounted — override initialData before first render
+      setInitialData((prev: any) => ({ ...prev, elements }));
+    }
+  }, [isSynced, elementsMap]);
+
+  // Sync remote Yjs changes into Excalidraw
+  // Continuously apply remote Yjs updates into the live Excalidraw scene
+  useEffect(() => {
+    if (!ydoc) return;
 
     const handleYjsChange = (event: any) => {
       if (event.transaction.origin === 'local') return;
+      if (!excalidrawRef.current) return;
 
       const elements = Array.from(elementsMap.values()) as ExcalidrawElement[];
-      if (excalidrawRef.current) {
-        excalidrawRef.current.updateScene({ elements });
-      }
+      excalidrawRef.current.updateScene({ elements });
       lastUpdateFromRemote.current = Date.now();
     };
 
     ydoc.on('update', handleYjsChange);
     return () => ydoc.off('update', handleYjsChange);
-  }, [isLoaded, elementsMap, ydoc]);
+  }, [elementsMap, ydoc]);
 
   const handleChange = useCallback((elements: readonly ExcalidrawElement[], appState: AppState) => {
     saveSceneToLocalStorage(elements, appState, roomToken);
@@ -120,41 +119,20 @@ export default function RoomCanvas({ roomToken }: RoomCanvasProps) {
 
   const handleExport = async (type: 'png' | 'svg') => {
     if (!excalidrawRef.current) return;
-
-    const elements = excalidrawRef.current.getSceneElements();
-    if (!elements || elements.length === 0) return;
-
-    try {
-      const { exportToBlob } = await import('@excalidraw/excalidraw');
-      
-      const currentAppState = excalidrawRef.current.getAppState();
-      const exportAppState = {
-        ...currentAppState,
-        viewBackgroundColor: "#121212",
-      };
-
-      const blob = await exportToBlob({
-        elements,
-        appState: exportAppState,
-        files: excalidrawRef.current.getFiles(),
-        mimeType: type === 'png' ? 'image/png' : 'image/svg+xml',
-      });
-
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `room-export-${roomToken}.${type}`;
-      link.click();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error("Export failed:", error);
-    }
+    await exportCanvas(
+      type,
+      excalidrawRef.current.getSceneElements(),
+      excalidrawRef.current.getAppState(),
+      excalidrawRef.current.getFiles(),
+      `room-export-${roomToken}`
+    );
   };
 
   const handleSaveToCloud = async () => {
     if (!user || !excalidrawRef.current) return;
 
     setIsSaving(true);
+    setSaveError(null);
     try {
       const elements = excalidrawRef.current.getSceneElements();
       const appState = excalidrawRef.current.getAppState();
@@ -168,18 +146,19 @@ export default function RoomCanvas({ roomToken }: RoomCanvasProps) {
 
       router.push(`/diagram/${diagram.id}`);
     } catch (error: any) {
-      alert("Error saving diagram: " + error.message);
+      setSaveError(error.message ?? 'Failed to save diagram');
     } finally {
       setIsSaving(false);
     }
   };
 
-  if (!isMounted || !isLoaded || !initialData) {
+  // Wait only for initialData to be set (from localStorage — happens synchronously on mount)
+  if (!initialData) {
     return (
       <div style={styles.loadingOverlay}>
         <div style={styles.loadingContent}>
           <Loader2 className="animate-spin" size={32} />
-          <p style={styles.loadingText}>Initializing Room...</p>
+          <p style={styles.loadingText}>Loading Canvas...</p>
         </div>
       </div>
     );
@@ -189,57 +168,70 @@ export default function RoomCanvas({ roomToken }: RoomCanvasProps) {
     <div style={styles.container}>
       <AppHeader roomToken={roomToken} isLive={status === 'connected'} />
       <WorkspaceBackground />
-      
-      <div style={styles.bottomOverlay}>
-        <div style={styles.buttonGroup}>
-          <button
-            onClick={() => handleExport('png')}
-            style={styles.exportButton}
-            title="Export as PNG"
-          >
-            <ImageIcon size={18} />
-          </button>
-          <button
-            onClick={() => handleExport('svg')}
-            style={styles.exportButton}
-            title="Export as SVG"
-          >
-            <FileCode size={18} />
-          </button>
 
-          {user && (
-            <button
-              onClick={handleSaveToCloud}
-              disabled={isSaving}
-              style={styles.cloudSaveButton}
-            >
-              {isSaving ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <CloudSync size={16} />
-              )}
-              <span>{isSaving ? "Saving..." : "Save to Cloud"}</span>
+      {/* Remote cursor overlays — reads scroll/zoom from excalidrawRef directly */}
+      <CursorOverlay
+        collaborators={collaborators}
+        excalidrawRef={excalidrawRef}
+      />
+
+      {/* Save error toast */}
+      {saveError && (
+        <div style={styles.errorToast}>
+          <span style={styles.errorText}>{saveError}</span>
+          <button onClick={() => setSaveError(null)} style={styles.errorClose}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Bottom action bar */}
+      <div style={styles.bottomOverlay}>
+        <div style={styles.bottomRow}>
+          {/* Status + active collaborators — left side */}
+          <div style={styles.leftCluster}>
+            <div style={styles.statusBadge}>
+              <div style={{
+                ...styles.statusDot,
+                backgroundColor: status === 'connected' ? '#4ade80' : status === 'connecting' ? '#facc15' : '#f87171'
+              }} />
+              <span>{status === 'connected' ? 'Live' : status === 'connecting' ? 'Connecting' : 'Offline'}</span>
+            </div>
+
+            <ActiveCollaborators
+              collaborators={collaborators}
+              localName={identity.name}
+              localColor={identity.color}
+            />
+          </div>
+
+          {/* Export + save — centre */}
+          <div style={styles.buttonGroup}>
+            <button onClick={() => handleExport('png')} style={styles.exportButton} title="Export as PNG">
+              <ImageIcon size={18} />
             </button>
-          )}
+            <button onClick={() => handleExport('svg')} style={styles.exportButton} title="Export as SVG">
+              <FileCode size={18} />
+            </button>
+
+            {user && (
+              <button onClick={handleSaveToCloud} disabled={isSaving} style={styles.cloudSaveButton}>
+                {isSaving ? <Loader2 size={16} className="animate-spin" /> : <CloudSync size={16} />}
+                <span>{isSaving ? 'Saving...' : 'Save to Cloud'}</span>
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
       <div style={styles.canvasWrapper}>
         <Excalidraw
-          excalidrawAPI={(api: any) => (excalidrawRef.current = api)}
+          excalidrawAPI={setExcalidrawAPI}
           initialData={initialData}
           onChange={handleChange}
           onPointerUpdate={handlePointerUpdate}
           theme="dark"
         />
-      </div>
-
-      <div style={styles.statusBadge}>
-        <div style={{
-          ...styles.statusDot,
-          backgroundColor: status === 'connected' ? '#4ade80' : status === 'connecting' ? '#facc15' : '#f87171'
-        }} />
-        <span>{status === 'connected' ? 'Live' : status === 'connecting' ? 'Connecting' : 'Offline'}</span>
       </div>
     </div>
   );
@@ -255,7 +247,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   canvasWrapper: {
     position: 'absolute',
-    top: 'var(--header-height)',
+    top: 'var(--header-height, 56px)',
     left: 0,
     right: 0,
     bottom: 0,
@@ -284,11 +276,44 @@ const styles: Record<string, React.CSSProperties> = {
   },
   bottomOverlay: {
     position: 'fixed',
-    bottom: '24px',
-    left: '50%',
-    transform: 'translateX(-50%)',
+    bottom: '20px',
+    left: 0,
+    right: 0,
     zIndex: 100,
     pointerEvents: 'none',
+    padding: '0 20px',
+  },
+  bottomRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  leftCluster: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    pointerEvents: 'auto',
+  },
+  statusBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    padding: '5px 12px',
+    borderRadius: '99px',
+    fontSize: '11px',
+    color: '#fff',
+    backdropFilter: 'blur(8px)',
+    letterSpacing: '0.05em',
+    textTransform: 'uppercase',
+    fontWeight: 600,
+    border: '1px solid rgba(255,255,255,0.08)',
+  },
+  statusDot: {
+    width: '6px',
+    height: '6px',
+    borderRadius: '50%',
+    flexShrink: 0,
   },
   buttonGroup: {
     display: 'flex',
@@ -301,7 +326,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     padding: '10px',
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(0,0,0,0.5)',
     color: '#fff',
     border: '1px solid rgba(255,255,255,0.1)',
     borderRadius: '8px',
@@ -321,29 +346,32 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: 'pointer',
     boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
-    transition: 'all 0.2s ease',
   },
-  statusBadge: {
+  errorToast: {
     position: 'fixed',
-    bottom: '16px',
-    left: '16px',
-    zIndex: 100,
+    top: '72px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 200,
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    padding: '4px 12px',
-    borderRadius: '99px',
-    fontSize: '11px',
-    color: '#fff',
-    backdropFilter: 'blur(8px)',
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase',
-    fontWeight: 600,
+    gap: '10px',
+    backgroundColor: '#450a0a',
+    border: '1px solid #f87171',
+    borderRadius: '8px',
+    padding: '10px 16px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
   },
-  statusDot: {
-    width: '6px',
-    height: '6px',
-    borderRadius: '50%',
+  errorText: {
+    fontSize: '13px',
+    color: '#fca5a5',
+  },
+  errorClose: {
+    background: 'none',
+    border: 'none',
+    color: '#f87171',
+    cursor: 'pointer',
+    padding: '2px',
+    display: 'flex',
   },
 };

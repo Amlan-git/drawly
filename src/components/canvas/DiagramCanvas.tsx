@@ -10,9 +10,10 @@ import dynamic from 'next/dynamic';
 import { createClient } from '@/lib/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import AppHeader from '@/components/shell/AppHeader';
-import { Loader2, CloudCheck, Cloud, Share2, Copy, Check, Globe, Lock, Download, Image as ImageIcon, FileCode } from 'lucide-react';
+import { Loader2, CloudCheck, Cloud, Share2, Copy, Check, Globe, Lock, Download, Image as ImageIcon, FileCode, X } from 'lucide-react';
 import { toggleDiagramSharing } from '@/lib/db-persistence';
 import WorkspaceBackground from '@/components/ui/WorkspaceBackground';
+import { exportCanvas } from '@/lib/export';
 
 const Excalidraw = dynamic(
   () => import('./CustomExcalidraw'),
@@ -36,9 +37,23 @@ export default function DiagramCanvas({ diagramId, initialData }: DiagramCanvasP
   const [shareToken, setShareToken] = useState<string | null>(initialData.share_token || null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
   const { user } = useAuth();
   const supabase = createClient();
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const titleSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const shareErrorTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const copiedTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Clear all transient timers on unmount to prevent setState-after-unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      if (titleSaveTimeoutRef.current) clearTimeout(titleSaveTimeoutRef.current);
+      if (shareErrorTimerRef.current) clearTimeout(shareErrorTimerRef.current);
+      if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
 
   const shareUrl = typeof window !== 'undefined'
     ? `${window.location.origin}/shared/${shareToken}`
@@ -51,14 +66,17 @@ export default function DiagramCanvas({ diagramId, initialData }: DiagramCanvasP
       const data = await toggleDiagramSharing(diagramId, user.id, isEnabling);
       setShareToken(data.share_token);
     } catch (error: any) {
-      alert('Error toggling share: ' + error.message);
+      setShareError(error.message ?? 'Failed to update sharing settings');
+      if (shareErrorTimerRef.current) clearTimeout(shareErrorTimerRef.current);
+      shareErrorTimerRef.current = setTimeout(() => setShareError(null), 4000);
     }
   };
 
   const copyToClipboard = () => {
     navigator.clipboard.writeText(shareUrl);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = setTimeout(() => setCopied(false), 2000);
   };
 
   const saveToCloud = useCallback(async (elements: any[], appState: any) => {
@@ -71,7 +89,22 @@ export default function DiagramCanvas({ diagramId, initialData }: DiagramCanvasP
         elements,
         app_state: {
           theme: appState.theme,
-          viewBackgroundColor: "#121212" // Export safely, do not save "transparent"
+          viewBackgroundColor: '#121212',
+          scrollX: appState.scrollX,
+          scrollY: appState.scrollY,
+          zoom: appState.zoom,
+          currentItemStrokeColor: appState.currentItemStrokeColor,
+          currentItemBackgroundColor: appState.currentItemBackgroundColor,
+          currentItemFillStyle: appState.currentItemFillStyle,
+          currentItemStrokeWidth: appState.currentItemStrokeWidth,
+          currentItemRoughness: appState.currentItemRoughness,
+          currentItemOpacity: appState.currentItemOpacity,
+          currentItemFontFamily: appState.currentItemFontFamily,
+          currentItemFontSize: appState.currentItemFontSize,
+          currentItemTextAlign: appState.currentItemTextAlign,
+          currentItemStrokeStyle: appState.currentItemStrokeStyle,
+          currentItemStartArrowhead: appState.currentItemStartArrowhead,
+          currentItemEndArrowhead: appState.currentItemEndArrowhead,
         },
         updated_at: new Date().toISOString(),
       })
@@ -99,48 +132,41 @@ export default function DiagramCanvas({ diagramId, initialData }: DiagramCanvasP
 
   const handleExport = async (type: 'png' | 'svg') => {
     if (!excalidrawAPI) return;
-
-    const elements = excalidrawAPI.getSceneElements();
-    if (!elements || elements.length === 0) return;
-
-    const { exportToBlob } = await import('@excalidraw/excalidraw');
-    
-    // Keep solid dark bg for exports
-    const exportAppState = {
-      ...excalidrawAPI.getAppState(),
-      viewBackgroundColor: "#121212"
-    };
-
-    const blob = await exportToBlob({
-      elements,
-      appState: exportAppState,
-      files: excalidrawAPI.getFiles(),
-      mimeType: type === 'png' ? 'image/png' : 'image/svg+xml',
-    });
-
-    const url = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `${title || 'diagram'}.${type}`;
-    link.click();
-    window.URL.revokeObjectURL(url);
+    await exportCanvas(
+      type,
+      excalidrawAPI.getSceneElements(),
+      excalidrawAPI.getAppState(),
+      excalidrawAPI.getFiles(),
+      title || 'diagram'
+    );
   };
 
-  const handleTitleChange = async (newTitle: string) => {
+  const handleTitleChange = (newTitle: string) => {
     setTitle(newTitle);
-    const { error } = await supabase
-      .from('diagrams')
-      .update({ title: newTitle })
-      .eq('id', diagramId)
-      .eq('user_id', user?.id);
-
-    if (error) console.error('Error updating title:', error.message);
+    if (titleSaveTimeoutRef.current) clearTimeout(titleSaveTimeoutRef.current);
+    titleSaveTimeoutRef.current = setTimeout(async () => {
+      const { error } = await supabase
+        .from('diagrams')
+        .update({ title: newTitle })
+        .eq('id', diagramId)
+        .eq('user_id', user?.id);
+      if (error) console.error('Error updating title:', error.message);
+    }, 1000);
   };
 
   return (
     <div style={styles.container}>
       <AppHeader />
       <WorkspaceBackground />
+
+      {shareError && (
+        <div style={styles.errorToast}>
+          <span style={styles.errorText}>{shareError}</span>
+          <button onClick={() => setShareError(null)} style={styles.errorClose}>
+            <X size={14} />
+          </button>
+        </div>
+      )}
 
       {/* Title Editor / Status Bar */}
       <div style={styles.titleBar}>
@@ -382,5 +408,32 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     color: 'rgba(255,255,255,0.4)',
     lineHeight: '1.5',
+  },
+  errorToast: {
+    position: 'fixed',
+    top: '72px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 200,
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    backgroundColor: '#450a0a',
+    border: '1px solid #f87171',
+    borderRadius: '8px',
+    padding: '10px 16px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+  },
+  errorText: {
+    fontSize: '13px',
+    color: '#fca5a5',
+  },
+  errorClose: {
+    background: 'none',
+    border: 'none',
+    color: '#f87171',
+    cursor: 'pointer',
+    padding: '2px',
+    display: 'flex',
   },
 };

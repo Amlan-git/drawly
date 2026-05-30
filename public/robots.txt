@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Allow: /shared/
+
+Disallow: /dashboard
+Disallow: /diagram/
+Disallow: /room/
+Disallow: /auth/
+
+Sitemap: https://drawly.vercel.app/sitemap.xml
