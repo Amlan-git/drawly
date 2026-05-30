@@ -58,9 +58,13 @@ const server = new Server({
     if (request.url === "/healthz" || request.url === "/health") {
       response.writeHead(200, { "Content-Type": "text/plain" });
       response.end("ok");
-      // Throwing rejects further default handling; resolving lets Hocuspocus continue.
-      // We've already ended the response, so just return.
-      return;
+      // Short-circuit Hocuspocus's default request handler. It explicitly
+      // swallows *falsy* throws from onRequest as a "handled" signal; any
+      // truthy error would be rethrown and logged as an unhandled rejection
+      // on every health check. See @hocuspocus/server requestHandler:
+      //   try { ...hooks... default 200 } catch (error) { if (error) throw error; }
+      // eslint-disable-next-line no-throw-literal
+      throw null;
     }
   },
 });
