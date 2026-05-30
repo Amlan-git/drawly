@@ -32,9 +32,6 @@ Unlike heavy whiteboard tools that force accounts, workspaces, and setup before 
 - Diagrams persisted to Postgres via Supabase with row-level security
 - Per-diagram share tokens for read-only public links
 
-## License
-
-MIT
 
 **Production-Ready Server**
 - Origin-allowlisted WebSocket connections
