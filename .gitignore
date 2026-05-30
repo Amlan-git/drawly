@@ -48,6 +48,10 @@ token.json
 .tmp/
 .tmp
 
+# === Collab server (deployed separately on Render) ===
+/server/node_modules
+/server/dist
+
 # === Python ===
 __pycache__/
 *.py[cod]

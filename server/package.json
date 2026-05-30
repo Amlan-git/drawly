@@ -1,0 +1,21 @@
+{
+  "name": "drawly-collab-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hocuspocus Yjs collaboration server for Drawly (deployed on Render)",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "dev": "tsx index.ts"
+  },
+  "dependencies": {
+    "@hocuspocus/server": "^3.4.4",
+    "yjs": "^13.6.30"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "tsx": "^4.21.0",
+    "typescript": "^5"
+  }
+}
