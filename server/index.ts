@@ -31,20 +31,29 @@ const server = new Server({
   port: PORT,
   address: ADDRESS,
 
-  async onAuthenticate({ requestHeaders }) {
-    if (!ORIGIN_CHECK_ENABLED) return;
+  // Origin check lives in onConnect — it fires for every connection in v3
+  // and receives the same requestHeaders payload as onAuthenticate, without
+  // being coupled to token/auth semantics. Defensive against any payload
+  // shape variance so we never throw a TypeError back to the client.
+  async onConnect(payload) {
+    if (ORIGIN_CHECK_ENABLED) {
+      const rawOrigin = payload?.requestHeaders?.origin;
+      const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
 
-    const rawOrigin = requestHeaders.origin;
-    const origin = Array.isArray(rawOrigin) ? rawOrigin[0] : rawOrigin;
-    if (!origin || !ALLOWED_ORIGINS.includes(origin)) {
-      console.warn(`[hocuspocus] rejecting connection from origin="${origin ?? "<none>"}"`);
-      throw new Error("Origin not allowed");
+      if (!origin) {
+        console.warn("[hocuspocus] rejecting connection: missing Origin header");
+        throw new Error("Origin header required");
+      }
+      if (!ALLOWED_ORIGINS.includes(origin)) {
+        console.warn(`[hocuspocus] rejecting connection from origin="${origin}"`);
+        throw new Error("Origin not allowed");
+      }
     }
-  },
 
-  async onConnect({ documentName }) {
     connectionCount++;
-    console.log(`[hocuspocus] + connected  room="${documentName}"  total=${connectionCount}`);
+    console.log(
+      `[hocuspocus] + connected  room="${payload?.documentName ?? "?"}"  total=${connectionCount}`,
+    );
   },
 
   async onDisconnect({ documentName }) {
