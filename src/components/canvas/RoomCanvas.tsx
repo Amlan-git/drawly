@@ -78,8 +78,11 @@ export default function RoomCanvas({ roomToken }: RoomCanvasProps) {
   useEffect(() => {
     if (!ydoc) return;
 
-    const handleYjsChange = (event: any) => {
-      if (event.transaction.origin === 'local') return;
+    // ydoc.on('update', cb) emits positional args: (update, origin, doc, transaction)
+    // NOT a single event object. Reading `event.transaction.origin` crashed with
+    // "Cannot read properties of undefined (reading 'origin')".
+    const handleYjsChange = (_update: Uint8Array, origin: unknown) => {
+      if (origin === 'local') return;
       if (!excalidrawRef.current) return;
 
       const elements = Array.from(elementsMap.values()) as ExcalidrawElement[];
